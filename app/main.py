@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 import kivy
 #kivy.require('1.0.8-dev')
 kivy.require('1.1.1')
@@ -27,6 +26,7 @@ from kivy.uix.image import Image
 from kivy.utils import format_bytes_to_human, platform
 from kivy.core.window import Window
 from kivy.properties import BooleanProperty, NumericProperty
+from kivy.cache import Cache
 
 from kivy.loader import Loader
 
@@ -68,7 +68,7 @@ class MuseotouchApp(App):
         if platform() in ('android', 'ios'):
             return 'mobile'
         return 'table'
-
+    
     def do_reset_item_position(self, *largs):
         self.images_pos = {}
         root = self.root_images     
@@ -313,7 +313,6 @@ class MuseotouchApp(App):
         # start from all items
         items = self.db.items
         result = []
-
         # update date range from slider value
         if self.date_slider:
             ma, mb = self.date_slider.value_range
@@ -338,16 +337,32 @@ class MuseotouchApp(App):
         if self.size_slider:
             # reorder item by taille
             items.sort(key=lambda x: x.taille)
-            ma, mb = self.size_slider.value_range
-            count = len(items)
-            item_min = int(ma * count)
-            item_max = max(item_min + 1, int(mb * count))
-
-            # adjust item selection
-            items = result = items[item_min:item_max]
+            # added another drawing system
+            # more precise and reliable 
+            # but certainly slower
+            try:
+                taille_max = float(items[-1]['taille'])
+                borne_max = taille_max*self.size_slider.value_max
+                borne_min = taille_max*self.size_slider.value_min
+                items = [x for x in items if (float(x['taille']) <= borne_max) and (float(x['taille']) >= borne_min)]
+            # fallback to the old system
+            # in case 'taille' field has been filled up with a non digit string in the backoffice
+            except:
+                ma, mb = self.size_slider.value_range
+                count = len(items)
+                item_min = int(ma * count)
+                item_max = max(item_min + 1, int(mb * count))
+                # adjust item selection
+                items = result = items[item_min:item_max]
             if len(items) == 0:
                 self.show_objects(items)
                 return
+
+        # # filter from size but with dropdown menu
+        if self.dropdown:
+            if self.dropdown.ids.mainbutton.text.lower() != 'valider un lot' and self.dropdown.ids.mainbutton.text.lower() !='tous les lots':
+                items = [x for x in items if x['taille'].lower()==self.dropdown.ids.mainbutton.text.lower()]
+            
 
         # filter from origin
         if self.imagemap:
@@ -358,7 +373,7 @@ class MuseotouchApp(App):
             if self.keywords and self.keywords.selected_keywords and not origin_ids:
                 pass
             else:
-                items = result = [x for x in items if x.origin_key in origin_ids]
+                items = result = [x for x in items if x.origin_key in origin_ids or x.origin_key==""]
 
         # filter from keywords but with image buttons, only if there is group of keyword with 'filtre' in the group's name
         if self.imageButtons:
@@ -556,9 +571,12 @@ class MuseotouchApp(App):
         #: keywords widget. If set, it will be used to show keywords
         self.keywords = None
 
-        #: size slider. If set, it will be used to show all size
+        #: size slider. If set, it will be used to show all sizes
         self.size_slider = None
         
+        #: drop down menu. If set, it will be used to show all sizes
+        self.dropdown = None
+
         #:Image buttons. 
         self.imageButtons = None
 
@@ -731,6 +749,14 @@ class MuseotouchApp(App):
 
         if self.calendar:
             self.calendar.bind(update=self.trigger_objects_filtering)
+
+        if self.dropdown:
+            batch_list=[]
+            for i in items:
+                if i['taille'] not in batch_list:
+                    batch_list.append(i['taille'])
+            self.dropdown.populate_drop_down(batch_list)
+            self.dropdown.bind(button_text=self.trigger_objects_filtering)
         
         if not hasattr(root, 'hide_items'):
             self.trigger_objects_filtering()
@@ -745,12 +771,12 @@ class MuseotouchApp(App):
         self.root = root
         parent.add_widget(self.root)
 
-        
+        print self.config
         demo = self.config.getboolean('museotouch', 'demo')
-        if demo: 
+        if 1: 
             button_inst = QuitButton()
             from kivy.uix.scatter import Scatter
-            scat = Scatter(size=(1200,1200), pos=(0,0), size_hint=(None, None), scale=.1 )
+            scat = Scatter(size=(1200,1200),pos_hint={'right': 1, 'top': 1}, size_hint=(None, None), scale=.05,do_translation=False,do_rotation=False,do_scale=False)
             scat.add_widget(button_inst)
             parent.add_widget(scat)
             def restart():
@@ -968,7 +994,7 @@ class MuseotouchApp(App):
         Logger.info('Museotouch: Synchronization part 4')
         ext = req.url.rsplit('.', 1)[-1]
         thumbnailfn = join(self.expo_dir, 'thumbnail.%s' % ext)
-        with open(thumbnailfn, 'w') as fd:
+        with open(thumbnailfn, 'wb') as fd:
             fd.write(result)
 
         # all ok, write original filename
@@ -1261,11 +1287,15 @@ class MuseotouchApp(App):
         for child in Window.children[:]:
             Window.remove_widget(child)
         print 'reset 0'
+        Cache.remove('kv.texture')
+        Cache.remove('kv.image')
         # remove everything from the current expo
         if hasattr(self, 'expo_data_dir'):
+            print self.expo_data_dir
             resource_remove_path(self.expo_data_dir)
             Builder.unload_file(join(self.expo_data_dir, 'museotouch.kv'))
             self.expo_dir = self.expo_data_dir = self.expo_img_dir = None
+        
 
         if go_to_menu == True:
             print 'reset'
